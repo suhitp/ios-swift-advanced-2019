@@ -1,0 +1,158 @@
+stages:
+  - open_merge
+  - before
+  - prepare
+  - test
+  - delivery
+  - version_user #separate version bumping for preventing a problem with concurrency of build
+  - version_tech
+  - after
+
+variables:
+  LC_ALL: "en_US.UTF-8"
+  LANG: "en_US.UTF-8"
+
+#Open merge request with WIP comment when push to git (feature and hotfix)
+open_merge_request:
+  before_script: []   # We do not need any setup work, let's remove the global one (if any)
+  stage: open_merge
+  script:
+    - chmod +x ./ci_gitlab_auto_merge_request.sh
+    - HOST=${CI_PROJECT_URL} CI_PROJECT_ID=${CI_PROJECT_ID} CI_COMMIT_REF_NAME=${CI_COMMIT_REF_NAME} GITLAB_USER_ID=${GITLAB_USER_ID} PRIVATE_TOKEN=${API_AUTH_TOKEN} ./Common/Extras/ci_gitlab_auto_merge_request.sh
+  tags:
+    - ios
+  only:
+    - /^feature/.*$/
+    - /^hotfix/.*$/
+
+#Setup bundle_install when push tags
+bundle_install_tags:
+  stage: before
+  script:
+   - bundle install
+  tags:
+   - ios
+  only:
+   - /^feature/.*$/
+   - /^stage/.*$/
+   - /^qa/.*$/
+   - /^production/.*$/
+   - /^release/.*$/
+  except:
+   - branches
+
+#Setup bundle_install when push tags
+bundle_install_branches:
+  stage: before
+  script:
+   - bundle install
+  tags:
+   - ios
+  only:
+   - /^feature/.*$/
+   - /^hotfix/.*$/
+  except:
+   - tags
+
+#Automatically run pod installation (from cache) for tags
+pod_install_tags:
+  stage: prepare
+  script:
+   - bundle exec fastlane install_pods
+  tags:
+   - ios
+  only:
+   - /^feature/.*$/
+   - /^stage/.*$/
+   - /^qa/.*$/
+   - /^production/.*$/
+   - /^release/.*$/
+  except:
+    - branches
+  cache:
+    key: $CI_PIPELINE_ID
+    paths:
+      - Pods/
+
+#Automatically run pod installation (from cache) for branches
+pod_install_branches:
+  stage: prepare
+  script:
+   - bundle exec fastlane install_pods
+  tags:
+   - ios
+  only:
+   - /^feature/.*$/
+   - /^hotfix/.*$/
+  except:
+    - tags
+  cache:
+    key: $CI_PIPELINE_ID
+    paths:
+      - Pods/
+
+#Manually deploy tech app to iTunes Connect and Crashlytics (for crash report)
+release:
+  stage: delivery
+  script:
+    - bundle exec fastlane release app:'tech'
+    - bundle exec fastlane production app:'tech' notes:'Itunes Connect release version' upload_dsym:false
+  tags:
+    - ios
+  only:
+    - /^release/.*$/
+  except:
+    - branches
+  environment: release
+  cache:
+    key: $CI_PIPELINE_ID
+    paths:
+      - Pods/
+
+#Runing unit tests for User App
+tests:
+  stage: test
+  script:
+    - bundle exec fastlane lint skip_fail:false
+    - bundle exec fastlane test app:'user'
+  tags:
+    - ios
+  only:
+    - /^feature/.*$/
+    - /^hotfix/.*$/
+  cache:
+    key: $CI_PIPELINE_ID
+    paths:
+      - Pods/
+
+#Deploying User App to crashlytics for Internal Users As Release
+production:
+  stage: delivery
+  script:
+    - bundle exec fastlane lint skip_fail:false
+    - bundle exec fastlane production app:'user'
+  tags:
+    - ios
+  only:
+    - /^production/.*$/
+  environment: production
+  cache:
+    key: $CI_PIPELINE_ID
+    paths:
+      - Pods/
+
+#Deploying Tech App to crashlytics for Internal Users As QA
+qa:
+  stage: delivery
+  script:
+    - bundle exec fastlane lint skip_fail:false
+    - bundle exec fastlane qa app:'tech'
+  tags:
+    - ios
+  only:
+    - /^qa/.*$/
+  environment: qa
+  cache:
+    key: $CI_PIPELINE_ID
+    paths:
+      - Pods/
